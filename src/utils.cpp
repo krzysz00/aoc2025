@@ -6,7 +6,8 @@
 
 std::string getInput(int argc, char **argv, int nArgs, string_view argsDesc) {
   if (argc < nArgs + 1 || argc > nArgs + 2) {
-    std::cerr << "Usage: " << argv[0] << " " << argsDesc << " [input file name]\n";
+    std::cerr << "Usage: " << argv[0] << " " << argsDesc
+              << " [input file name]\n";
     std::exit(1);
   }
 

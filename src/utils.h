@@ -16,13 +16,13 @@ using std::vector;
 /// using either argv[nArgs + 1] if it exists or stdin, and returns it as
 /// a string. Checks if there are nArgs arguments present in argv and exits
 /// the program otherwise.
-std::string getInput(int argc, char** argv, int nArgs=0, std::string_view argsDes={});
+std::string getInput(int argc, char **argv, int nArgs = 0,
+                     std::string_view argsDes = {});
 
 /// Parse the string slice `slice` as a decimal integer.
-template<typename IntT>
-optional<IntT> parseDecimalInt(string_view slice) {
+template <typename IntT> optional<IntT> parseDecimalInt(string_view slice) {
   IntT ret = 0;
-  for (const char& c : slice) {
+  for (const char &c : slice) {
     if (c < '0' || c > '9') {
       return std::nullopt;
     }

@@ -18,12 +18,19 @@
 
 #include <cassert>
 #include <cmath>
+#include <compare>
 #include <iostream>
 #include <numeric>
 #include <ranges>
 #include <string_view>
+#include <unordered_set>
+
+using std::span;
+using std::strong_ordering;
+using intSet = std::unordered_set<int64_t>;
 
 static int64_t nDigits(int64_t n) {
+  assert(n > 0 && "non-positive numbers can't happen in this problem");
   return static_cast<int64_t>(std::floor(std::log10(static_cast<double>(n)))) +
          1;
 }
@@ -37,13 +44,52 @@ int64_t powi(int64_t x, int64_t y) {
   return ret;
 }
 
-// When `n` has an even number of digits, return the digits in the top and
-// buttom halves.
-std::tuple<int64_t, int64_t> getDigitHalves(int64_t n) {
+/// Split a number `n` into `k` sub-parts that all have the same number of
+/// decimal digits. The number of digits in `n`'s decimal representation
+/// must be evenly divisible by `k`.
+/// When `n` has an even number of digits, return the digits in the top and
+/// buttom halves.
+vector<int64_t> getDigitParts(int64_t n, int64_t k) {
   int64_t digits = nDigits(n);
-  assert(digits % 2 == 0 && "need even number of digits");
-  int64_t split = powi(10, digits / 2);
-  return {n / split, n % split};
+  assert(digits % k == 0 && "need even number of digits");
+  int64_t partLen = digits / k;
+  int64_t split = powi(10, partLen);
+  vector<int64_t> ret(k, 0);
+  for (int64_t &d : std::views::reverse(ret)) {
+    d = n % split;
+    n /= split;
+  }
+  return ret;
+}
+
+/// General implementation of the "will we get to all equal parts if we kept
+/// incrementing/decrementing" test needed for boundary cases. Takes a sequence
+/// of digits `ds` and returns true if they're all equal or if, for any element
+/// d of ds, d <=> d[0] is equal to `trueResult`, or false if any has the
+/// opposite
+// relationship.
+static bool compareWithFirst(const span<int64_t> ds,
+                             const strong_ordering trueResult) {
+  assert(!ds.empty() && "expected at least one element");
+  int64_t highest = ds.front();
+  for (int64_t d : ds.subspan(1, std::dynamic_extent)) {
+    strong_ordering cmp = d <=> highest;
+    if (cmp == trueResult) {
+      return true;
+    } else if (cmp == strong_ordering::equal) {
+      continue;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool atOrBelowAllEqual(const span<int64_t> ds) {
+  return compareWithFirst(ds, strong_ordering::less);
+}
+static bool atOrAboveAllEqual(const span<int64_t> ds) {
+  return compareWithFirst(ds, strong_ordering::greater);
 }
 
 /// Range of numbers, inclusive of both endpoints.
@@ -64,9 +110,15 @@ struct Range {
   // of digits. Otherwise, copies the range into `splitRanges`.
   void sameDigitLenSplit(vector<Range> &splitRanges) const;
 
-  // Sum all the numbers in the range that are of the form [num][num] in
-  // decimal.
-  int64_t repeatedHalvesSum() const;
+  // Find all the numbers in the range that are of the form [num][num]...[num]
+  // for some smaller number [num], where [num] occurs `numParts` times, and
+  // inserts them into `seen`. Requires that the low and high endpoints have the
+  // same number of digits.
+  void collectRepeatedParts(int64_t numParts, intSet &seen) const;
+
+  // Like `collectRepeatedParts` above, but iterates over all possible numbers
+  // of times that [num] could repeat.
+  void collectRepeatedParts(intSet &seen) const;
 };
 
 optional<Range> Range::parse(string_view text) {
@@ -102,47 +154,77 @@ void Range::sameDigitLenSplit(vector<Range> &splitRanges) const {
   }
 }
 
-int64_t Range::repeatedHalvesSum() const {
+void Range::collectRepeatedParts(int64_t numParts, intSet &seen) const {
   assert(hasSameDigitLen() && "range should've been split");
-  if (nDigits(lo) % 2 != 0) {
-    return 0;
+  int64_t digits = nDigits(lo);
+  if (digits % numParts != 0) {
+    return;
   }
-  auto [hiLo, loLo] = getDigitHalves(lo);
-  auto [hiHi, loHi] = getDigitHalves(hi);
-  int64_t combiner = powi(10, nDigits(lo) / 2);
-  std::cout << *this << ": [" << hiLo << "/" << loLo << "-" << hiHi << "/"
-            << loHi << "]\n";
-  auto dupHalf = [&](int64_t v) { return v * combiner + v; };
-  // Special case so we don't double-count.
-  if (hiLo == hiHi) {
-    if (loLo <= hiLo && loHi >= hiHi) {
-      return dupHalf(hiLo);
-    } else {
-      return 0;
+  vector<int64_t> loParts = getDigitParts(lo, numParts);
+  vector<int64_t> hiParts = getDigitParts(hi, numParts);
+  int64_t split = digits / numParts;
+  int64_t combiner = powi(10, split);
+  auto collectRepeat = [&](int64_t v) {
+    int64_t acc = v;
+    for (int64_t i = 1; i < numParts; ++i) {
+      acc = acc * combiner + v;
     }
+    seen.insert(acc);
+  };
+
+  int64_t loHead = loParts.front(), hiHead = hiParts.front();
+  // Special case for when the front parts are equal to avoid false entries.
+  if (loHead == hiHead) {
+    if (atOrBelowAllEqual(loParts) && atOrAboveAllEqual(hiParts)) {
+      collectRepeat(loHead);
+    }
+    return;
   }
 
-  int64_t ret = 0;
-  if (loLo <= hiLo) {
-    ret += dupHalf(hiLo);
+  if (atOrBelowAllEqual(loParts)) {
+    collectRepeat(loHead);
   }
-  if (loHi >= hiHi) {
-    ret += dupHalf(hiHi);
+  if (atOrAboveAllEqual(hiParts)) {
+    collectRepeat(hiHead);
   }
-  for (int64_t v = hiLo + 1; v < hiHi; ++v) {
-    ret += dupHalf(v);
+  for (int64_t v = loHead + 1; v < hiHead; ++v) {
+    collectRepeat(v);
   }
-  return ret;
 }
 
-static int64_t solveA(std::span<Range> input) {
+void Range::collectRepeatedParts(intSet &seen) const {
+  assert(hasSameDigitLen() && "range should've been split");
+  int64_t digits = nDigits(lo);
+
+  // Number of divisors of the number of digits is small enough to
+  // brute-force.
+  for (int64_t numParts = digits; numParts > 1; --numParts) {
+    if (digits % numParts != 0) {
+      continue;
+    }
+    collectRepeatedParts(numParts, seen);
+  }
+}
+
+static int64_t sumSet(const intSet &set) {
+  return std::accumulate(set.begin(), set.end(), 0ll, std::plus<int64_t>());
+}
+
+static std::pair<int64_t, int64_t> solve(const span<Range> input) {
   vector<Range> splitRanges;
   for (const Range &r : input) {
     r.sameDigitLenSplit(splitRanges);
   }
-  return std::accumulate(
-      splitRanges.begin(), splitRanges.end(), 0ll,
-      [](int64_t acc, const Range &r) { return acc + r.repeatedHalvesSum(); });
+
+  intSet partASeen;
+  intSet partBSeen;
+
+  for (const Range &r : splitRanges) {
+    r.collectRepeatedParts(2, partASeen);
+    r.collectRepeatedParts(partBSeen);
+  }
+
+  return {sumSet(partASeen), sumSet(partBSeen)};
 }
 
 static vector<Range> parse(string_view input) {
@@ -165,7 +247,7 @@ static vector<Range> parse(string_view input) {
 int main(int argc, char **argv) {
   std::string rawInput = getInput(argc, argv);
   vector<Range> input = parse(rawInput);
-  int64_t partA = solveA(input);
-  std::cout << "Part A: " << partA << "\n";
+  auto [partA, partB] = solve(input);
+  std::cout << "Part A: " << partA << "\n" << "Part B: " << partB << "\n";
   return 0;
 }
